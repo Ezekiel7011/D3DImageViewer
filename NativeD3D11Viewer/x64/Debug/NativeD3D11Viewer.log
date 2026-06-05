@@ -1,0 +1,40 @@
+﻿  NativeViewer.cpp
+D:\UI_Test\NativeD3D11Viewer\NativeViewer.cpp(4,9): warning C4005: 'WIN32_LEAN_AND_MEAN': 巨集重複定義
+      D:\UI_Test\NativeD3D11Viewer\NativeViewer.cpp(4,9):
+      'WIN32_LEAN_AND_MEAN' 先前已在命令列中宣告
+  
+C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.51.36231\include\xutility(5094,18): warning C4244: '=': 將 'wchar_t' 轉換為 'char'，由於類型不同，可能導致資料遺失
+  (編譯來源檔案 'NativeViewer.cpp')
+      C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.51.36231\include\xutility(5094,18):
+      範本具現化內容 (首先是最舊的) 是
+          D:\UI_Test\NativeD3D11Viewer\NativeViewer.cpp(709,26):
+          請參考正在進行編譯的函式 樣板 具現化 'std::basic_string<char,std::char_traits<char>,std::allocator<char>>::basic_string<std::_String_iterator<std::_String_val<std::_Simple_types<_Elem>>>,0>(_Iter,_Iter,const _Alloc &)'
+          with
+          [
+              _Elem=wchar_t,
+              _Iter=std::_String_iterator<std::_String_val<std::_Simple_types<wchar_t>>>,
+              _Alloc=std::allocator<char>
+          ]
+              D:\UI_Test\NativeD3D11Viewer\NativeViewer.cpp(709,26):
+              請參閱 'NativeViewer::DrawQueuedText' 中 'std::basic_string<char,std::char_traits<char>,std::allocator<char>>::basic_string' 的第一個參考
+          C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.51.36231\include\xstring(862,17):
+          請參考正在進行編譯的函式 樣板 具現化 'void std::basic_string<char,std::char_traits<char>,std::allocator<char>>::_Construct_from_iter<wchar_t*,wchar_t*,_Size_type>(_Iter,const _Sent,_Size)'
+          with
+          [
+              _Size_type=unsigned __int64,
+              _Iter=wchar_t *,
+              _Sent=wchar_t *,
+              _Size=unsigned __int64
+          ]
+          C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.51.36231\include\xstring(1018,18):
+          請參考正在進行編譯的函式 樣板 具現化 '_OutIt *std::_Copy_n_unchecked4<wchar_t*,_Size,char*>(_InIt,_SizeTy,_OutIt)'
+          with
+          [
+              _OutIt=char *,
+              _Size=unsigned __int64,
+              _InIt=wchar_t *,
+              _SizeTy=unsigned __int64
+          ]
+  
+     正在建立程式庫 ..\CSharpViewer\bin\x64\Debug\net8.0-windows\NativeD3D11Viewer.lib 和物件 ..\CSharpViewer\bin\x64\Debug\net8.0-windows\NativeD3D11Viewer.exp
+  NativeD3D11Viewer.vcxproj -> D:\UI_Test\CSharpViewer\bin\x64\Debug\net8.0-windows\NativeD3D11Viewer.dll
