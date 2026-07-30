@@ -8,19 +8,42 @@ using System.Text.RegularExpressions;
 
 namespace AoiBatchExportApi;
 
-public enum AoiExportOverlayType { Roi=0, Measure=1, Circle=2, AoiDieCenter=3, AoiDieCorner=4, AoiDefect=5 }
+#region Public API Models
 
+/// <summary>
+/// Overlay kinds supported by manual image export.
+/// </summary>
+public enum AoiExportOverlayType { Roi = 0, Measure = 1, Circle = 2, AoiDieCenter = 3, AoiDieCorner = 4, AoiDefect = 5 }
+
+/// <summary>
+/// Overlay snapshot supplied by the viewer when exporting the current image with visible overlays.
+/// </summary>
 public sealed record AoiExportOverlay(int Id, AoiExportOverlayType Type, bool Visible, float X1, float Y1, float X2, float Y2, float Angle, string Name);
 
+/// <summary>
+/// Aggregate result returned after a folder batch export.
+/// </summary>
 public sealed record AoiBatchExportResult(int TotalScanned, int ExportedCount, int SkippedWithoutMetadata, int FailedCount, IReadOnlyList<string> Errors);
 
+/// <summary>
+/// Exports AOI images either as fixed report layouts or as original images composited with viewer overlays.
+/// </summary>
 public static class AoiBatchExporter
 {
+    #region Supported Formats
+
     private static readonly HashSet<string> ImageExts = new(StringComparer.OrdinalIgnoreCase)
     {
         ".bmp", ".png", ".jpg", ".jpeg", ".jfif", ".tif", ".tiff", ".gif", ".wdp", ".jxr", ".webp"
     };
 
+    #endregion
+
+    #region Public Export API
+
+    /// <summary>
+    /// Exports all supported images in a folder, rendering AOI metadata when available and copying plain images otherwise.
+    /// </summary>
     public static AoiBatchExportResult ExportFolder(string sourceFolder, string destinationFolder)
     {
         if (string.IsNullOrWhiteSpace(sourceFolder)) throw new ArgumentException("sourceFolder is required.", nameof(sourceFolder));
@@ -37,6 +60,8 @@ public static class AoiBatchExporter
         log.AppendLine("Destination: " + destinationFolder);
         log.AppendLine();
 
+        // Export each supported image once. Images with AOI metadata are rendered into
+        // the fixed report layout; images without metadata are copied through unchanged.
         foreach (var file in Directory.EnumerateFiles(sourceFolder).Where(p => ImageExts.Contains(Path.GetExtension(p))).OrderBy(p => p, StringComparer.OrdinalIgnoreCase))
         {
             total++;
@@ -78,6 +103,9 @@ public static class AoiBatchExporter
         return new AoiBatchExportResult(total, exported, noMeta, failed, errors);
     }
 
+    /// <summary>
+    /// Saves one image with the provided visible overlays drawn directly in original image coordinates.
+    /// </summary>
     public static void ExportImageWithOverlays(string imagePath, string destinationPath, IEnumerable<AoiExportOverlay> overlays)
     {
         if (string.IsNullOrWhiteSpace(imagePath)) throw new ArgumentException("imagePath is required.", nameof(imagePath));
@@ -99,6 +127,9 @@ public static class AoiBatchExporter
         SaveImageByExtension(bmp, destinationPath);
     }
 
+    /// <summary>
+    /// Attempts to export one image and returns a user-displayable message instead of throwing.
+    /// </summary>
     public static bool TryExportImage(string imagePath, string destinationPath, out string message)
     {
         try
@@ -121,8 +152,14 @@ public static class AoiBatchExporter
         }
     }
 
+    #endregion
+
+    #region Fixed Layout Rendering
+
     private static void ExportFixedLayout(string imagePath, string destinationPath, AoiMeta meta)
     {
+        // Fixed-size canvas used by batch export: image preview on the left,
+        // compact metadata summary on the right, AOI overlays mapped into preview space.
         const int canvasW = 1600;
         const int canvasH = 900;
         const int outer = 24;
@@ -167,6 +204,10 @@ public static class AoiBatchExporter
         SaveJpeg(bmp, destinationPath, 92L);
     }
 
+    #endregion
+
+    #region File and Encoding Helpers
+
     private static void EnsureParentDirectory(string path)
     {
         string? dir = Path.GetDirectoryName(Path.GetFullPath(path));
@@ -208,8 +249,14 @@ public static class AoiBatchExporter
         image.Save(path, codec, ep);
     }
 
+    #endregion
+
+    #region Overlay Drawing Helpers
+
     private static void DrawOverlayOnOriginal(Graphics g, AoiExportOverlay o)
     {
+        // Manual overlay export draws in original image coordinates, unlike the fixed
+        // batch layout which maps image coordinates into a fitted preview rectangle.
         switch (o.Type)
         {
             case AoiExportOverlayType.AoiDieCenter:
@@ -350,6 +397,10 @@ public static class AoiBatchExporter
         g.DrawLine(pen, x + w, y + h, x + w - l, y + h); g.DrawLine(pen, x + w, y + h, x + w, y + h - l);
     }
 
+    #endregion
+
+    #region Metadata Model and Parsing
+
     private sealed record AoiRect(double X, double Y, double W, double H);
     private sealed record AoiDefectRec(int Index, AoiRect Rect, double WidthUm, double HeightUm, string Bin, string AlgoIds);
     private sealed class AoiMeta
@@ -371,148 +422,61 @@ public static class AoiBatchExporter
     private static bool TryReadMetadata(string file, out AoiMeta meta)
     {
         meta = new AoiMeta { Path = file };
-        string? json = ReadAoiJson(file, out string source);
-        if (!string.IsNullOrWhiteSpace(json))
+        bool found = ViewerMetadataLoader.TryLoad(file, out var genericMeta);
+        if (!found) return false;
+
+        meta.Source = genericMeta.SourceKind;
+        meta.Created = genericMeta.GetProperty("Created");
+        meta.Result = genericMeta.GetProperty("Result");
+        meta.DieXYT = genericMeta.GetProperty("Die XYT");
+        meta.ChipHW = genericMeta.GetProperty("Chip H/W");
+        meta.Error = genericMeta.GetProperty("Error");
+        meta.Recipe = genericMeta.GetProperty("Recipe");
+
+        if (double.TryParse(genericMeta.GetProperty("DieCenterX", ""), NumberStyles.Float, CultureInfo.InvariantCulture, out var dcx) &&
+            double.TryParse(genericMeta.GetProperty("DieCenterY", ""), NumberStyles.Float, CultureInfo.InvariantCulture, out var dcy))
         {
-            ParseAoiJson(json!, source, meta);
-            return true;
+            meta.DieCenterX = dcx;
+            meta.DieCenterY = dcy;
         }
-        foreach (var ext in new[] { ".json", ".txt", ".csv", ".aoi" })
+
+        int defectIndex = 1;
+        foreach (var overlay in genericMeta.Overlays)
         {
-            var side = Path.ChangeExtension(file, ext);
-            if (!File.Exists(side)) continue;
-            string text = File.ReadAllText(side);
-            if (text.TrimStart().StartsWith("{"))
+            if (overlay.Kind == ViewerOverlayKind.Rectangle && overlay.Rect is { } rect)
             {
-                ParseAoiJson(text, side, meta);
-                return true;
+                var r = new AoiRect(rect.X, rect.Y, rect.W, rect.H);
+                if (overlay.Category.Equals("die", StringComparison.OrdinalIgnoreCase) || overlay.Name.Contains("die", StringComparison.OrdinalIgnoreCase))
+                {
+                    meta.DiePos ??= r;
+                    continue;
+                }
+
+                if (overlay.Category.Equals("defect", StringComparison.OrdinalIgnoreCase) || overlay.Name.Contains("defect", StringComparison.OrdinalIgnoreCase))
+                {
+                    double wu = ParseMetaDouble(overlay.Attributes.GetValueOrDefault("WidthUm", "0"));
+                    double hu = ParseMetaDouble(overlay.Attributes.GetValueOrDefault("HeightUm", "0"));
+                    string bin = overlay.Attributes.GetValueOrDefault("BinCode", overlay.Attributes.GetValueOrDefault("bin", "--"));
+                    string algo = overlay.Attributes.GetValueOrDefault("AlgoIds", overlay.Attributes.GetValueOrDefault("AlgoID", "--"));
+                    meta.Defects.Add(new AoiDefectRec(defectIndex++, r, wu, hu, bin, algo));
+                }
             }
-            if (ext.Equals(".json", StringComparison.OrdinalIgnoreCase))
-                return false;
-        }
-        return false;
-    }
-
-    private static string? ReadAoiJson(string file, out string source)
-    {
-        source = "";
-        string ext = Path.GetExtension(file).ToLowerInvariant();
-        var len = new FileInfo(file).Length;
-        if (ext is not ".jpg" and not ".jpeg" && len > 200L * 1024 * 1024) return null;
-        byte[] bytes = File.ReadAllBytes(file);
-        string? xmp = ReadGmmJsonFromJpgXmp(bytes);
-        if (!string.IsNullOrWhiteSpace(xmp)) { source = "XMP APP1 / gmm:AOIJson"; return xmp; }
-        string? appended = ReadOldAppendMetadata(bytes);
-        if (!string.IsNullOrWhiteSpace(appended)) { source = "APPENDED / AOI_BEGIN"; return appended; }
-        return null;
-    }
-
-    private static string? ReadGmmJsonFromJpgXmp(byte[] bytes)
-    {
-        byte[] header = Encoding.ASCII.GetBytes("http://ns.adobe.com/xap/1.0/\0");
-        int pos = FindPattern(bytes, header, 0);
-        if (pos < 0) return null;
-        int xmpStart = pos + header.Length;
-        int segStart = pos - 4;
-        if (segStart < 0 || bytes[segStart] != 0xFF || bytes[segStart + 1] != 0xE1) return null;
-        int segLength = (bytes[segStart + 2] << 8) | bytes[segStart + 3];
-        int segEnd = segStart + 2 + segLength;
-        if (segEnd > bytes.Length || xmpStart >= segEnd) return null;
-        string xmp = Encoding.UTF8.GetString(bytes, xmpStart, segEnd - xmpStart);
-        const string beginTag = "<gmm:AOIJson><![CDATA[";
-        const string endTag = "]]></gmm:AOIJson>";
-        int b = xmp.IndexOf(beginTag, StringComparison.Ordinal);
-        if (b < 0) return null;
-        b += beginTag.Length;
-        int e = xmp.IndexOf(endTag, b, StringComparison.Ordinal);
-        if (e < 0) return null;
-        return xmp.Substring(b, e - b).Replace("]]]]><![CDATA[>", "]]>").Trim();
-    }
-
-    private static string? ReadOldAppendMetadata(byte[] bytes)
-    {
-        byte[] begin = Encoding.UTF8.GetBytes("\nAOI_BEGIN\n");
-        byte[] end = Encoding.UTF8.GetBytes("\nAOI_END\n");
-        int s = FindPattern(bytes, begin, 0);
-        if (s < 0) return null;
-        s += begin.Length;
-        int e = FindPattern(bytes, end, s);
-        if (e < 0 || e <= s) return null;
-        return Encoding.UTF8.GetString(bytes, s, e - s);
-    }
-
-    private static int FindPattern(byte[] data, byte[] pattern, int start)
-    {
-        for (int i = Math.Max(0, start); i <= data.Length - pattern.Length; i++)
-        {
-            bool ok = true;
-            for (int j = 0; j < pattern.Length; j++) if (data[i + j] != pattern[j]) { ok = false; break; }
-            if (ok) return i;
-        }
-        return -1;
-    }
-
-    private static void ParseAoiJson(string json, string source, AoiMeta meta)
-    {
-        using var doc = JsonDocument.Parse(json);
-        var root = doc.RootElement;
-        meta.Source = source;
-        meta.Created = GetString(root, "created_time", "--");
-        meta.Result = GetBool(root, "detectResult") ? "True" : "False";
-        double dcx = GetDouble(root, "dieCenterX"), dcy = GetDouble(root, "dieCenterY"), dct = GetDouble(root, "dieCenterT");
-        meta.DieXYT = $"{dcx:0.####}, {dcy:0.####}, {dct:0.####}";
-        double chipH = GetDouble(root, "dChipH_mm"), chipW = GetDouble(root, "dChipW_mm");
-        meta.ChipHW = chipH > 0 || chipW > 0 ? $"{chipH:0.####} / {chipW:0.####} mm" : "--";
-        meta.Error = GetString(root, "errMsg", "--");
-        meta.Recipe = GetString(root, "recipe_path", "--");
-        meta.DiePos = ParseRect(GetString(root, "diePos", ""));
-        if (dcx != 0 || dcy != 0) { meta.DieCenterX = dcx; meta.DieCenterY = dcy; }
-        if (root.TryGetProperty("defectList", out var arr) && arr.ValueKind == JsonValueKind.Array)
-        {
-            int index = 1;
-            foreach (var d in arr.EnumerateArray())
+            else if ((overlay.Kind is ViewerOverlayKind.Point or ViewerOverlayKind.Crosshair) && overlay.Points.Count > 0)
             {
-                var r = ParseRect(GetString(d, "Rect", ""));
-                if (r == null || r.W <= 0 || r.H <= 0) continue;
-                double wu = GetDouble(d, "WidthUm"), hu = GetDouble(d, "HeightUm");
-                string bin = GetString(d, "BinCode", "--");
-                string algo = FormatAlgoIds(GetString(d, "AlgoID", ""));
-                meta.Defects.Add(new AoiDefectRec(index++, r, wu, hu, bin, algo));
+                if (overlay.Category.Equals("die-center", StringComparison.OrdinalIgnoreCase) || overlay.Name.Contains("center", StringComparison.OrdinalIgnoreCase))
+                {
+                    meta.DieCenterX = overlay.Points[0].X;
+                    meta.DieCenterY = overlay.Points[0].Y;
+                }
             }
         }
+        return true;
     }
 
-    private static string GetString(JsonElement e, string name, string fallback)
-    {
-        if (!e.TryGetProperty(name, out var v) || v.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined) return fallback;
-        return v.ValueKind == JsonValueKind.String ? v.GetString() ?? fallback : v.ToString();
-    }
-    private static double GetDouble(JsonElement e, string name)
-    {
-        if (!e.TryGetProperty(name, out var v)) return 0;
-        if (v.ValueKind == JsonValueKind.Number && v.TryGetDouble(out double d)) return d;
-        return double.TryParse(v.ToString(), NumberStyles.Float, CultureInfo.InvariantCulture, out d) ? d : 0;
-    }
-    private static bool GetBool(JsonElement e, string name)
-    {
-        if (!e.TryGetProperty(name, out var v)) return false;
-        if (v.ValueKind == JsonValueKind.True) return true;
-        if (v.ValueKind == JsonValueKind.False) return false;
-        return bool.TryParse(v.ToString(), out bool b) && b;
-    }
-    private static AoiRect? ParseRect(string text)
-    {
-        if (string.IsNullOrWhiteSpace(text)) return null;
-        var p = text.Split(',');
-        if (p.Length < 4) return null;
-        return new AoiRect(ToD(p[0]), ToD(p[1]), ToD(p[2]), ToD(p[3]));
-    }
-    private static double ToD(string s) => double.TryParse(s.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var d) ? d : 0;
-    private static string FormatAlgoIds(string algo)
-    {
-        if (!long.TryParse(algo, NumberStyles.Integer, CultureInfo.InvariantCulture, out var v) || v <= 0) return "--";
-        var ids = new List<string>();
-        for (int i = 0; i < 63; i++) if ((v & (1L << i)) != 0) ids.Add("AlgoID:" + i.ToString(CultureInfo.InvariantCulture));
-        return ids.Count == 0 ? "--" : string.Join(", ", ids);
-    }
+    private static double ParseMetaDouble(string text) =>
+        double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var d) ? d : 0;
+
+    #endregion
 }
+
+#endregion

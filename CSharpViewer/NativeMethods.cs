@@ -1,15 +1,35 @@
-using System;
+﻿using System;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.IO;
 
 namespace CSharpViewer;
 
-internal enum ToolMode { Pan=0, ZoomRect=1, Pixel=2, Roi=3, Measure=4, Select=5, Circle=6 }
-internal enum ProcOp { None=0, Threshold=1, Invert=2, Blur=3, Sobel=4, LinearStretch=5, Gamma=6, OtsuThreshold=7, AdaptiveThreshold=8, Median=9, Sharpen=10, MorphologyErode=11, MorphologyDilate=12, MorphologyOpen=13, MorphologyClose=14 }
-internal enum DisplayMode { Base=0, Processed=1, Blend=2 }
-internal enum OverlayType { Roi=0, Measure=1, Circle=2, AoiDieCenter=3, AoiDieCorner=4, AoiDefect=5 }
+#region Native Type Mirrors
 
+/// <summary>
+/// Viewer interaction modes mirrored from the native renderer.
+/// </summary>
+internal enum ToolMode { Pan = 0, ZoomRect = 1, Pixel = 2, Roi = 3, Measure = 4, Select = 5, Circle = 6 }
+
+/// <summary>
+/// Image processing operators mirrored from the native renderer.
+/// </summary>
+internal enum ProcOp { None = 0, Threshold = 1, Invert = 2, Blur = 3, Sobel = 4, LinearStretch = 5, Gamma = 6, OtsuThreshold = 7, AdaptiveThreshold = 8, Median = 9, Sharpen = 10, MorphologyErode = 11, MorphologyDilate = 12, MorphologyOpen = 13, MorphologyClose = 14 }
+
+/// <summary>
+/// Native output display mode used for base, processed, or blended previews.
+/// </summary>
+internal enum DisplayMode { Base = 0, Processed = 1, Blend = 2 }
+
+/// <summary>
+/// Overlay kinds shared between the managed UI and native drawing layer.
+/// </summary>
+internal enum OverlayType { Roi = 0, Measure = 1, Circle = 2, AoiDieCenter = 3, AoiDieCorner = 4, AoiDefect = 5, FixedCenterRect = 6, DrawPolygon = 7 }
+
+/// <summary>
+/// Native image metadata returned after a successful image load.
+/// </summary>
 [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
 internal struct NVImageInfo
 {
@@ -19,13 +39,22 @@ internal struct NVImageInfo
     [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 520)] public string path;
 }
 
+/// <summary>
+/// Native render and tile-cache counters used by the debug HUD.
+/// </summary>
 [StructLayout(LayoutKind.Sequential)]
 internal struct NVDiagnostics
 {
     public float fps, renderMs, scale, offsetX, offsetY;
     public int imageWidth, imageHeight, overlayCount, gpuUploadCount;
+    public int pendingWorkerRequests, readyToUploadTiles, cpuCachedTiles, gpuResidentTiles;
+    public int uploadedTilesLastFrame, duplicateTileRequests, staleTileDiscards, renderReason;
+    public int maxTileUploadPerFrame, cpuCacheLimitMb, gpuCacheLimitMb;
 }
 
+/// <summary>
+/// Native overlay snapshot used to populate managed overlay lists and geometry editors.
+/// </summary>
 [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
 internal struct NVOverlayInfo
 {
@@ -34,6 +63,9 @@ internal struct NVOverlayInfo
     [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 64)] public string name;
 }
 
+/// <summary>
+/// Native ROI analysis result, including histogram and blob summary values.
+/// </summary>
 [StructLayout(LayoutKind.Sequential)]
 internal struct NVRoiStats
 {
@@ -44,6 +76,13 @@ internal struct NVRoiStats
     public int blobCount, largestBlobArea, largestBlobX, largestBlobY, largestBlobW, largestBlobH;
 }
 
+#endregion
+
+#region P/Invoke Entry Points
+
+/// <summary>
+/// Managed declarations for the exported NativeD3D11Viewer DLL functions.
+/// </summary>
 internal static class NativeMethods
 {
     private const string Dll = "NativeD3D11Viewer.dll";
@@ -101,5 +140,11 @@ internal static class NativeMethods
 
     [DllImport(Dll, CallingConvention = CallingConvention.StdCall, CharSet = CharSet.Unicode)] public static extern int NV_AddOverlay(IntPtr viewer, int type, float x, float y, float w, float h, float angle, string name);
     [DllImport(Dll, CallingConvention = CallingConvention.StdCall)] public static extern void NV_UpdateOverlay(IntPtr viewer, int id, float x, float y, float w, float h, float angle);
+    [DllImport(Dll, CallingConvention = CallingConvention.StdCall, CharSet = CharSet.Unicode)] public static extern int NV_AddPolygonOverlay(IntPtr viewer, int type, [In] float[] xyPairs, int pointCount, string name);
+    [DllImport(Dll, CallingConvention = CallingConvention.StdCall)] public static extern int NV_GetPendingTileCount(IntPtr viewer);
+    [DllImport(Dll, CallingConvention = CallingConvention.StdCall)] public static extern void NV_SetTileSettings(IntPtr viewer, int uploadPerFrame, int cpuCacheLimitMb, int gpuCacheLimitMb, int maxQueueCount);
+    [DllImport(Dll, CallingConvention = CallingConvention.StdCall)] public static extern void NV_SetRenderReason(IntPtr viewer, int reason);
     [DllImport(Dll, CallingConvention = CallingConvention.StdCall, CharSet = CharSet.Unicode)] public static extern int NV_GetLastError(IntPtr viewer, StringBuilder buffer, int capacity);
 }
+
+#endregion

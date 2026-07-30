@@ -7,16 +7,13 @@
     <Platforms>x64</Platforms>
     <Nullable>disable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <AssemblyName>AOIImageViewer</AssemblyName>
+    <RootNamespace>CSharpViewer</RootNamespace>
+    <Version>1.0.0</Version>
+    <ApplicationIcon>..\icon.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="..\NativeD3D11Viewer\NativeD3D11Viewer.vcxproj" ReferenceOutputAssembly="false" Private="false" />
     <ProjectReference Include="..\AoiBatchExportApi\AoiBatchExportApi.csproj" />
   </ItemGroup>
-  <Target Name="BuildNativeD3D11Viewer" BeforeTargets="Build">
-    <MSBuild Projects="..\NativeD3D11Viewer\NativeD3D11Viewer.vcxproj" Targets="Build" Properties="Configuration=$(Configuration);Platform=x64" />
-  </Target>
-  <Target Name="VerifyNativeDll" AfterTargets="Build">
-    <Error Text="NativeD3D11Viewer.dll was not produced. Build NativeD3D11Viewer first, or install Desktop development with C++ and Windows SDK."
-           Condition="!Exists('$(OutDir)NativeD3D11Viewer.dll')" />
-  </Target>
 </Project>
