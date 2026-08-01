@@ -1,156 +1,112 @@
-# D3D11NativeHybridFull phase15
+# AOI Image Viewer
 
-Fixes:
-- Line and Circle creation now show live size labels while dragging.
-  - Line: live length label.
-  - Circle/Ellipse: live W/H label and temporary corner handles.
-- Overlay Items and AOI Objects visibility changes only when the checkbox square is clicked.
-  - Row click selects only.
-  - Double click / row click will not toggle visibility.
-- Keeps phase14 geometry synchronization and resize-anchor behavior.
+> A high-performance AOI image review and annotation tool built with **Direct3D 11, Native C++, and .NET 8 WinForms**.
 
+[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](#version-information)
+[![Platform](https://img.shields.io/badge/platform-Windows%20x64-lightgrey.svg)](#system-requirements)
+[![.NET](https://img.shields.io/badge/.NET-8.0-512BD4.svg)](#build-instructions)
+[![Renderer](https://img.shields.io/badge/renderer-Direct3D%2011-green.svg)](#technical-architecture)
 
-Phase16 updates:
-- Tool buttons now show active mode state. Zoom/Edit/Rect/Line/Circle will turn accent blue when selected.
-- Works for mouse clicks and keyboard shortcuts.
+## Overview
 
-## Phase17 note
-This build changes the BMP loader quality policy: BMP files up to 8192 x 8192 and 128MP are now uploaded as full-resolution R8 textures instead of being forced into the 2048 preview path. Larger BMPs still use the preview path until the full tile renderer is completed.
+AOI Image Viewer is a Windows desktop application designed for Automated Optical Inspection (AOI) image review, defect verification, annotation, measurement, and export workflows.
 
+The application uses C# WinForms for the user interface and a Native C++ Direct3D 11 rendering engine for image display, zooming, panning, graphical overlays, and tiled loading of large BMP images. Compared with traditional GDI-based rendering, the application provides smoother interaction and clear pixel-level inspection at high zoom levels.
 
-## Phase 19 - Export / Batch Export
-- Added **Export View** button to save the current viewport board as PNG.
-- Added **Batch Export** button to export all images with AOI metadata in a source folder into a fixed-layout AOI report image.
-- Added **AoiBatchExportApi** class library for reuse from other .NET projects.
-- API entry point: `AoiBatchExportApi.AoiBatchExporter.ExportFolder(sourceFolder, destinationFolder)`
-- Destination folder is created automatically when missing.
-- Images without AOI metadata are skipped and are not re-rendered.
+The current production release is **v1.0.0**. The software is ready for deployment and real-world use. Future releases will be improved based on user feedback, performance monitoring, and actual production workflows.
 
+---
 
-## Phase 19 compile fix
-- AoiBatchExportApi now enables UseWindowsForms so System.Drawing types (Bitmap, Graphics, Font, Brush) resolve through the Windows Desktop SDK references.
+## Key Features
 
-## Phase 20 - Export fixes
-- Batch Export no longer writes `Source` into the AOI Export right-side panel.
-- Metadata images are exported as JPG for faster batch rendering.
-- Images without metadata are still exported by copying the original file unchanged.
-- `BatchExportLog.txt` is written to the destination folder and records only no-metadata files and failed files, plus summary counts.
-- Single-image `Export View` was changed from screen capture to layer combine: it loads the original image and draws visible native overlay objects onto the image layer before saving. This avoids stale frame / screenshot residue.
+### Image Viewing
 
+- Mouse-wheel zooming and image panning
+- Region-based zoom using Zoom ROI
+- Quick navigation to the previous or next image
+- Real-time image coordinates and grayscale value at the cursor position
+- Point sampling at high zoom levels to prevent blur caused by bilinear interpolation
+- Pixel-grid alignment at high magnification for accurate pixel-level inspection
+- Command-line image path support for integration with Windows file associations
 
-## Phase 21 - Sharp Zoom Sampling
-- Changed D3D11 texture sampler from `D3D11_FILTER_MIN_MAG_MIP_LINEAR` to `D3D11_FILTER_MIN_MAG_MIP_POINT`.
-- This prevents high-zoom inspection from being blurred by bilinear filtering.
-- Full-resolution BMP tiles and preview texture now use point sampling, matching IrfanView-style pixel inspection more closely.
+### Large Image Handling
 
-## Phase 22 - Gray label visibility tune
-- Reduced gray-level label box size.
-- Reduced gray-level label background opacity.
-- Reduced gray-level font size to make the image content less obstructed.
+- Hybrid preview and full-resolution tile rendering for large BMP images
+- Asynchronous background tile loading to keep the user interface responsive
+- Visible-region prioritization with a controlled GPU upload budget per frame
+- CPU and GPU tile caches with LRU-based cleanup
+- Tile worker shutdown and recreation during image switching to prevent stale data and fast-switching crashes
+- Dirty-rendering mechanism that avoids unnecessary full-speed redraws while the view is idle
 
-## Phase 23 - Dirty Render Loop
-- Replaced continuous full-speed redraw with dirty rendering.
-- Static image idle state no longer calls `NV_Render()` every 16 ms.
-- Render is requested by load, resize, pan, zoom, overlay edit, processing changes, options changes, and tile-update interaction windows.
-- During pan/zoom/edit the viewer keeps short continuous rendering windows to preserve smooth interaction and allow full-resolution tiles to settle.
-- Debug overlay refreshes at low frequency when idle, instead of forcing full-speed redraw.
+### Annotation and Measurement
 
-## Phase 24 - Pixel-grid zoom and tile completion
-- High zoom now snaps the view to an integer pixel grid so large BMP full-resolution tiles do not display with non-grid sampling after wheel zoom or zoom-ROI.
-- Tile/preview drawing snaps screen-space region coordinates at pixel inspection zoom to keep tile borders aligned with the image pixel grid.
-- Dirty render mode now keeps rendering while native full-resolution tile queue still has pending tiles, preventing the viewer from stopping on preview-resolution data after zooming.
-- Increased per-frame full-res tile uploads from 2 to 6 to fill the visible viewport faster while staying responsive on iGPU.
-- Added `NV_GetPendingTileCount()` for UI/debug and render scheduling.
+- Rectangle ROI
+- Line measurement
+- Circle and ellipse annotations
+- Polygon annotations
+- Fixed-center rectangles
+- Annotation selection, visibility control, and geometry editing
+- Real-time line length display during creation
+- Real-time width and height display while creating circles or ellipses
+- Separate management of manually created objects and metadata-loaded objects
 
-## Phase 25 - Background tile streamer
-- Changed large BMP full-resolution tile loading from render-thread synchronous IO to a background worker streamer.
-- Render thread now only plans visible tiles, uploads CPU-ready tiles under a per-frame budget, and draws resident tiles.
-- Background worker pool reads BMP tile rows and places CPU-ready tiles into a ready queue.
-- Tile queue now reports both pending worker requests and ready-to-upload tiles so dirty render continues until detail tiles are filled.
-- Added simple CPU/GPU LRU trimming based on frame touch age.
-- This is the first version of the professional-style streamer; a later pass can replace fread row IO with memory-mapped file reads and add multi-resolution pyramid layers.
+### ROI Analysis
 
-## Phase 26 - Stabilization / Diagnostics
-- Added tile diagnostics to the native debug overlay and C# status panel:
-  - pending worker requests
-  - ready-to-upload tiles
-  - CPU cached tiles
-  - GPU resident tiles
-  - uploaded tiles per frame
-  - duplicate tile request count
-  - stale tile discard count
-  - current render reason
-- Added stale tile guards so background worker results from previous images are discarded after image switch.
-- Added duplicate tile request guard using a queued-key set to prevent queue inflation during rapid pan/zoom.
-- Added configurable tile upload budget and CPU/GPU tile cache limits via `NV_SetTileSettings`.
-- Added queue trim cleanup so dropped queued tiles can be requested again later.
-- Added render-reason handoff from C# dirty-render loop to native debug overlay via `NV_SetRenderReason`.
+- ROI coordinates and dimensions
+- Number of sampled pixels
+- Mean and standard deviation
+- Minimum and maximum values
+- Blob count and largest blob area
 
-### Stress test checklist
-1. Open a large 1GB BMP and confirm preview appears quickly.
-2. Pan continuously for 20 seconds and confirm the UI remains interactive.
-3. Zoom with mouse wheel into defect-level detail and confirm full-res tiles replace preview tiles.
-4. Use Zoom ROI repeatedly and confirm TILE WORK / READY eventually returns near zero.
-5. Stop interacting and confirm idle dirty-render recovery; FPS should no longer run at full rate forever.
-6. Switch between multiple large images and confirm stale tile count may increase but old-image tiles never appear.
-7. Rapidly pan/zoom and confirm duplicate request count may increase but queue size stays bounded.
+### Image Processing
 
-Memory-mapped IO and a multi-resolution pyramid layer are still deferred until profiling shows a real bottleneck.
+The following real-time image-processing operations are currently available:
 
+- Linear Stretch
+- Gamma
+- Invert
+- Threshold
+- Otsu Threshold
+- Adaptive Threshold
+- Blur
+- Median
+- Sharpen
+- Sobel
+- Erode
+- Dilate
+- Morphology Open
+- Morphology Close
 
-## Phase 27 - App packaging and Windows file association
+Visible-tile processing is executed through iGPU/GPU shaders. CPU-based statistical analysis is deferred and limited to the selected ROI.
 
-This project can now be packaged like a normal Windows image viewer app.
+### Export
 
-### Command line open
-`AOIImageViewer.exe "D:\Images\sample.bmp"` opens that image on startup. This is required for Windows file association.
+- **Export View** composites the original image with the currently visible annotation layers, avoiding ghosting or synchronization issues caused by screen capture
+- **Batch Export** processes images and metadata from a source folder
+- Images with metadata are exported as AOI report images
+- Images without metadata are copied directly without unnecessary re-rendering
+- Batch operations generate `BatchExportLog.txt`, including missing metadata, failed items, and summary statistics
+- Reusable `AoiBatchExportApi` for integration with other .NET applications
 
-### Publish folder
-Run from a **Developer Command Prompt for VS 2022**:
+---
 
-```bat
-build_publish_x64.bat
-```
+## Supported Formats
 
-Output folder:
+### Image Formats
 
-```text
-publish\win-x64
-```
+- BMP / DIB
+- JPEG / JPG / JFIF
+- PNG
+- TIFF / TIF
+- GIF
+- WebP
+- JPEG XR / JXR / WDP
 
-Run directly:
+> Large BMP files use a dedicated background tile streamer. The practical size limit for other formats depends on the decoder, available system memory, and image content.
 
-```text
-publish\win-x64\AOIImageViewer.exe
-```
+### Metadata Sidecar Files
 
-### Installer / file association
-The installer script is:
-
-```text
-installer\AOIImageViewer.iss
-```
-
-Open it with Inno Setup and compile it after `build_publish_x64.bat` completes.
-
-The installer registers the app under Windows Open With / Default Apps for:
-
-```text
-.bmp .jpg .jpeg .png .tif .tiff .gif .webp
-```
-
-Windows 10/11 may still require the user to choose the app once through:
-
-```text
-Settings -> Apps -> Default apps -> Choose defaults by file type
-```
-
-## Phase 28 - Generic Metadata Parser
-
-The metadata reader is now a generic overlay parser instead of an AOI-only parser.
-
-### Supported sidecar files
-The viewer looks for metadata next to the image in this order:
+The application searches for sidecar files in the same folder as the image in the following order:
 
 ```text
 <image>.meta.json
@@ -162,7 +118,13 @@ The viewer looks for metadata next to the image in this order:
 <image>.aoi
 ```
 
-### Generic JSON format
+Parsed metadata is converted into the shared `ViewerMetadata` and `ViewerOverlay` data models used by both single-image review and batch export.
+
+---
+
+## Metadata Formats
+
+### JSON Example
 
 ```json
 {
@@ -189,16 +151,32 @@ The viewer looks for metadata next to the image in this order:
       "type": "polygon",
       "name": "ROI 1",
       "category": "roi",
-      "points": [[100,100], [200,100], [180,180]]
+      "points": [
+        [100, 100],
+        [200, 100],
+        [180, 180]
+      ]
     }
   ]
 }
 ```
 
-Rectangle geometry accepts common variants: `x/y/width/height`, `x/y/w/h`, `left/top/right/bottom`, `rect`, `Rect`, or `bbox`.
-Polygon geometry accepts `points`, `vertices`, or `nodes`.
+Rectangle geometry supports the following common field formats:
 
-### Generic CSV format
+- `x / y / width / height`
+- `x / y / w / h`
+- `left / top / right / bottom`
+- `rect`
+- `Rect`
+- `bbox`
+
+Polygon vertices may be provided through:
+
+- `points`
+- `vertices`
+- `nodes`
+
+### CSV Example
 
 ```csv
 type,name,category,x,y,width,height,label
@@ -206,20 +184,281 @@ rectangle,Defect 1,defect,100,200,50,30,NG
 rectangle,Defect 2,defect,300,400,20,10,NG
 ```
 
-Polygon CSV rows can use semicolon-separated point pairs:
+Polygon coordinates may be separated with semicolons:
 
 ```csv
 type,name,category,points
 polygon,ROI 1,roi,"100,100;200,100;180,180"
 ```
 
-### Legacy compatibility
-Legacy AOI JSON fields such as `defectList`, `Rect`, `drawPolygon`, `dieCenterX`, `dieCenterY`, `diePos`, and `recipe_path` are still supported through the same pipeline, but they are treated as adapter input and converted into the generic `ViewerMetadata` / `ViewerOverlay` model.
+### Legacy AOI Compatibility
 
-The shared parser lives in:
+The current version remains compatible with selected legacy AOI fields, including:
+
+- `defectList`
+- `Rect`
+- `drawPolygon`
+- `dieCenterX`
+- `dieCenterY`
+- `diePos`
+- `recipe_path`
+
+These fields are converted into the unified metadata model through a compatibility layer, reducing the effort required to migrate existing data.
+
+---
+
+## Installation and Usage
+
+### Installer
+
+After the installer has been built, the default output path is:
 
 ```text
-AoiBatchExportApi/Metadata/ViewerMetadata.cs
+installer\Output\AOIImageViewerSetup_x64.exe
 ```
 
-Both the WinForms viewer and `AoiBatchExporter` now use this shared parser so single-image review and batch export stay consistent.
+The installer can:
+
+- Install AOI Image Viewer
+- Create a Start menu shortcut
+- Optionally create a desktop shortcut
+- Register the application as a Windows image-viewer candidate
+- Add the application to the **Open with** list for common image formats
+
+Windows 10 and Windows 11 do not allow installers to forcefully change default applications without user confirmation. After installation, configure the default application using either of the following methods:
+
+1. Right-click an image file and select **Open with → Choose another app**.
+2. Select **AOI Image Viewer**.
+3. Enable the option to always use this application for the selected file type.
+
+Alternatively, open:
+
+```text
+Settings → Apps → Default apps → AOI Image Viewer
+```
+
+### Run Directly
+
+```text
+AOIImageViewer.exe
+```
+
+### Open an Image from the Command Line
+
+```bat
+AOIImageViewer.exe "D:\Images\sample.bmp"
+```
+
+---
+
+## Build Instructions
+
+### System Requirements
+
+- Windows 10 or Windows 11, 64-bit
+- Direct3D 11-compatible graphics device
+- Visual Studio 2022
+- Desktop development with C++ workload
+- .NET 8 SDK
+- MSBuild
+- Inno Setup 6, required only when building the installer
+
+### Build the Publish Package
+
+Open a **Developer Command Prompt for Visual Studio 2022**, navigate to the project root, and run:
+
+```bat
+build_publish_x64.bat
+```
+
+The script will:
+
+1. Build the Native C++ Direct3D 11 DLL using `Release / x64`.
+2. Publish the .NET 8 WinForms application as a self-contained `win-x64` package.
+3. Copy `NativeD3D11Viewer.dll` into the publish directory.
+
+Output:
+
+```text
+publish\win-x64\AOIImageViewer.exe
+```
+
+### Build the Installer
+
+After installing Inno Setup 6, run:
+
+```bat
+build_installer_x64.bat
+```
+
+Output:
+
+```text
+installer\Output\AOIImageViewerSetup_x64.exe
+```
+
+---
+
+## AoiBatchExportApi
+
+`AoiBatchExportApi` can be referenced independently by other .NET projects to batch-export AOI images and metadata.
+
+Main entry point:
+
+```csharp
+AoiBatchExportApi.AoiBatchExporter.ExportFolder(
+    sourceFolder,
+    destinationFolder);
+```
+
+Basic example:
+
+```csharp
+using AoiBatchExportApi;
+
+string sourceFolder = @"D:\AOI\Source";
+string destinationFolder = @"D:\AOI\Export";
+
+AoiBatchExporter.ExportFolder(sourceFolder, destinationFolder);
+```
+
+The destination folder is created automatically when it does not exist.
+
+---
+
+## Technical Architecture
+
+```text
+┌───────────────────────────────────────────────┐
+│ CSharpViewer                                  │
+│ .NET 8 / WinForms UI                          │
+│ UI, metadata management, file browsing,       │
+│ and export control                            │
+└───────────────────────┬───────────────────────┘
+                        │ P/Invoke
+┌───────────────────────▼───────────────────────┐
+│ NativeD3D11Viewer                             │
+│ Native C++ / Direct3D 11                      │
+│ Rendering, tile streaming, shaders, overlays, │
+│ and user interaction                         │
+└───────────────────────────────────────────────┘
+
+┌───────────────────────────────────────────────┐
+│ AoiBatchExportApi                             │
+│ Metadata Parser / Batch Export                │
+│ Shared data model for image review and export │
+└───────────────────────────────────────────────┘
+```
+
+### Project Structure
+
+```text
+D3DImageViewer/
+├─ CSharpViewer/                  # Main WinForms application
+├─ NativeD3D11Viewer/             # Native C++ / D3D11 rendering engine
+├─ AoiBatchExportApi/             # Metadata and batch-export API
+├─ installer/                     # Inno Setup scripts
+├─ build_publish_x64.bat          # Publish build script
+├─ build_installer_x64.bat        # Installer build script
+├─ icon.ico
+└─ README.md
+```
+
+---
+
+## Stability and Performance Design
+
+Version 1.0.0 includes the following stability and performance measures:
+
+- Native API entry points are serialized through mutual exclusion to prevent image loading, rendering, and mouse input from modifying shared state simultaneously
+- Background tile workers are stopped and joined before a new image is opened
+- Stale tile results from the previous image are discarded after image switching
+- Duplicate tile requests are prevented during rapid panning and zooming
+- Tile uploads per frame are limited to balance visual updates and input responsiveness
+- CPU and GPU tile caches are cleaned according to recent usage
+- Rapid use of Previous and Next avoids background access to replaced image state
+- Metadata objects and manually created objects are managed separately to reduce accidental modification
+
+---
+
+## Recommended v1.0.0 Validation
+
+Before production deployment, complete at least the following tests:
+
+1. Open standard-size and large BMP images and confirm that the preview appears quickly.
+2. Continuously pan and zoom while confirming that the interface remains responsive.
+3. Zoom to defect-review magnification and confirm that full-resolution tiles progressively replace the preview.
+4. Repeatedly use Zoom ROI and confirm that all required detail eventually loads.
+5. Rapidly switch between multiple large images and confirm that tiles from the previous image are not displayed.
+6. Validate JSON, CSV, and legacy AOI metadata rendering.
+7. Confirm that exported images and annotation positions match the viewer.
+8. Validate batch-export output files, copied files, and log statistics.
+9. Validate installation, uninstallation, and Windows file associations.
+10. Perform long-duration stability testing on production hardware using a representative image dataset.
+
+---
+
+## Known Limitations
+
+- Only Windows x64 is currently supported.
+- Windows default applications must be confirmed by the user and cannot be forced by the installer.
+- Large BMP files use the complete tile-streaming pipeline; other compressed formats do not yet use the same tiled decoding architecture.
+- Memory-mapped files and multi-resolution image pyramids have not yet been implemented and will be evaluated based on real performance requirements.
+- Metadata fields may vary between data sources. Compatibility should be validated using actual production data before deployment.
+
+---
+
+## Version Information
+
+### v1.0.0
+
+Initial production release, including:
+
+- Native Direct3D 11 image-rendering engine
+- Background tile streamer for large BMP images
+- Image zooming, panning, quick navigation, and pixel-level inspection
+- Rectangle, line, circle, ellipse, and polygon annotations
+- ROI statistics and basic image processing
+- Generic metadata parser and legacy AOI compatibility layer
+- Export View and Batch Export
+- Self-contained Windows x64 deployment package
+- Inno Setup installer and image file association support
+- Stability fixes for rapid image switching and background worker operations
+
+---
+
+## Roadmap
+
+Following the v1.0.0 production rollout, future development will be driven primarily by real-world user feedback and operational data.
+
+Planned areas of evaluation and improvement include:
+
+- Large-image loading speed and memory consumption
+- Tile-cache behavior, GPU upload budgets, and background loading strategies
+- Metadata format compatibility and field mapping
+- Annotation workflows and user-interface usability
+- Batch-export performance, layout, and error reporting
+- Long-duration stability and high-volume image switching
+- Multi-resolution image pyramids and memory-mapped I/O
+- SDK and API capabilities for integration with other AOI systems
+
+When reporting an issue, include the following information whenever possible:
+
+- Software version
+- Windows version
+- CPU, GPU, and memory specifications
+- Image format, dimensions, and file size
+- Metadata sample
+- Steps required to reproduce the issue
+- Error messages, logs, or screenshots
+
+---
+
+## License and Usage
+
+This project currently does not include a public software license. Unless explicit permission is granted by the project owner, the project must not be considered open-source software that may be freely copied, modified, distributed, or used for external commercial purposes.
+
+---
+
+**AOI Image Viewer v1.0.0**  
+Designed for efficient AOI image review, annotation, analysis, and export on Windows x64.
