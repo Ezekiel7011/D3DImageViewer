@@ -1,6 +1,6 @@
 ; Inno Setup script for AOI Image Viewer
 ; Build steps:
-;   1. Run build_publish_x64.bat from a Visual Studio Developer Command Prompt.
+;   1. Run build_publish_x64.bat.
 ;   2. Compile this script with Inno Setup 6, or run build_installer_x64.bat.
 ;
 ; Windows 10/11 note:

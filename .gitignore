@@ -1,0 +1,33 @@
+# Visual Studio / user-specific files
+.vs/
+.agents/
+*.user
+*.suo
+*.rsuser
+
+# .NET and MSBuild outputs
+**/bin/
+**/obj/
+**/[Xx]64/
+**/[Dd]ebug/
+**/[Rr]elease/
+
+# Publish and installer outputs
+publish/
+installer/Output/
+
+# Native build intermediates
+*.idb
+*.ilk
+*.iobj
+*.ipdb
+*.obj
+*.pch
+*.pdb
+*.tlog
+
+# Logs and temporary files
+*.log
+*.tmp
+*.bak
+*.zip
