@@ -226,7 +226,6 @@ static const int kCpuCacheLimitMb = 512;
 static const int kTileSize = 1024;
 static const int kDefaultMaxTileUploadPerFrame = 12;
 static const int kPreloadTileMargin = 1;
-static const double kFullResolutionTileZoomThreshold = 0.25;
 static const int kMaxBackgroundTileLoadQueueCount = 512;
 
 // ===== NativeViewer Class =====
@@ -256,7 +255,7 @@ public:
     ComPtr<ID2D1SolidColorBrush> d2dBrush;
     ComPtr<IDWriteTextFormat> textFormat;
 
-    // Image state is stored as an 8-bit grayscale preview plus optional BMP tile metadata.
+    // Image state is stored as an 8-bit grayscale preview plus optional full-resolution tiles.
     ComPtr<ID3D11Texture2D> tex;
     ComPtr<ID3D11ShaderResourceView> srv;
     std::vector<unsigned char> pixels;
@@ -264,8 +263,9 @@ public:
     std::wstring fmt, path;
     long long fileSize = 0;
     int uploadCount = 0;
+    D3D_FEATURE_LEVEL featureLevel = D3D_FEATURE_LEVEL_10_1;
 
-    bool bmpTileReady = false, bmpTopDown = false;
+    bool bmpTileReady = false, wicTileReady = false, bmpTopDown = false;
     int bmpBpp = 0;
     long long bmpOffBits = 0, bmpRowStride = 0;
     std::vector<RGBQUAD> bmpPalette;
@@ -338,6 +338,7 @@ public:
             &ctx);
 
         if (FAILED(hr)) return Err(L"D3D11CreateDeviceAndSwapChain failed");
+        featureLevel = got;
         if (!CreateRT()) return false;
 
         HRESULT d2dHr = D2D1CreateFactory(
@@ -456,6 +457,24 @@ public:
         return false;
     }
 
+    bool HasFullResolutionTiles() const
+    {
+        return bmpTileReady || wicTileReady;
+    }
+
+    bool ShouldUseFullResolutionTiles() const
+    {
+        // The preview contains one texel per sampleStep source pixels. Full-resolution
+        // tiles become useful only when a preview texel would occupy at least one
+        // screen pixel; below that point the preview already has enough detail.
+        return HasFullResolutionTiles() && sampleStep > 1 && scale * (float)sampleStep >= 1.0f;
+    }
+
+    int MaxTextureDimension() const
+    {
+        return featureLevel >= D3D_FEATURE_LEVEL_11_0 ? 16384 : 8192;
+    }
+
     bool CreateRT()
     {
         ComPtr<ID3D11Texture2D> bb;
@@ -532,6 +551,7 @@ public:
         texW = texH = 0;
         sampleStep = 1;
         bmpTileReady = false;
+        wicTileReady = false;
         bmpTopDown = false;
         bmpBpp = 0;
         bmpOffBits = 0;
@@ -820,54 +840,56 @@ public:
 
         UINT w = 0, h = 0;
         frame->GetSize(&w, &h);
+        if (w == 0 || h == 0 || w > (UINT)INT_MAX || h > (UINT)INT_MAX)
+        {
+            return Err(L"Invalid WIC image size");
+        }
         iw = (int)w;
         ih = (int)h;
-        texW = iw;
-        texH = ih;
-        sampleStep = 1;
+        sampleStep = PickSampleStep(iw, ih);
+        texW = (iw + sampleStep - 1) / sampleStep;
+        texH = (ih + sampleStep - 1) / sampleStep;
+        wicTileReady = sampleStep > 1;
 
         WICPixelFormatGUID srcFmt{};
         frame->GetPixelFormat(&srcFmt);
         bitDepth = 8;
-        fmt = L"WIC";
+        fmt = sampleStep > 1
+            ? L"WIC preview downsample 1/" + std::to_wstring(sampleStep) + L" + full-res tiles"
+            : L"WIC";
 
         if (srcFmt == GUID_WICPixelFormat16bppGray) bitDepth = 16;
         else if (srcFmt == GUID_WICPixelFormat8bppGray) bitDepth = 8;
-        else if (srcFmt == GUID_WICPixelFormat24bppRGB) bitDepth = 24;
-        else if (srcFmt == GUID_WICPixelFormat32bppBGRA) bitDepth = 32;
+        else if (srcFmt == GUID_WICPixelFormat24bppRGB || srcFmt == GUID_WICPixelFormat24bppBGR) bitDepth = 24;
+        else if (srcFmt == GUID_WICPixelFormat32bppBGRA || srcFmt == GUID_WICPixelFormat32bppRGBA ||
+                 srcFmt == GUID_WICPixelFormat32bppPBGRA || srcFmt == GUID_WICPixelFormat32bppPRGBA) bitDepth = 32;
 
-        if (srcFmt == GUID_WICPixelFormat8bppGray)
+        ComPtr<IWICBitmapSource> previewSource;
+        if (sampleStep > 1)
         {
-            pixels.resize((size_t)iw * ih);
-            hr = frame->CopyPixels(nullptr, (UINT)iw, (UINT)pixels.size(), pixels.data());
-            return SUCCEEDED(hr) || Err(L"CopyPixels 8bppGray failed");
+            ComPtr<IWICBitmapScaler> scaler;
+            hr = fac->CreateBitmapScaler(&scaler);
+            if (FAILED(hr)) return Err(L"WIC preview scaler creation failed");
+            hr = scaler->Initialize(frame.Get(), (UINT)texW, (UINT)texH, WICBitmapInterpolationModeFant);
+            if (FAILED(hr)) return Err(L"WIC preview scaling failed");
+            previewSource = scaler;
         }
-
-        if (srcFmt == GUID_WICPixelFormat16bppGray)
+        else
         {
-            std::vector<unsigned short> tmp((size_t)iw * ih);
-            hr = frame->CopyPixels(nullptr, (UINT)(iw * 2), (UINT)(tmp.size() * sizeof(unsigned short)), reinterpret_cast<BYTE*>(tmp.data()));
-            if (FAILED(hr)) return Err(L"CopyPixels 16bppGray failed");
-
-            pixels.resize((size_t)iw * ih);
-            for (size_t i = 0; i < tmp.size(); ++i)
-            {
-                pixels[i] = (unsigned char)(tmp[i] >> 8);
-            }
-
-            return true;
+            previewSource = frame;
         }
 
         ComPtr<IWICFormatConverter> conv;
-        fac->CreateFormatConverter(&conv);
-        hr = conv->Initialize(frame.Get(), GUID_WICPixelFormat32bppBGRA, WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeCustom);
+        hr = fac->CreateFormatConverter(&conv);
+        if (FAILED(hr)) return Err(L"WIC format converter creation failed");
+        hr = conv->Initialize(previewSource.Get(), GUID_WICPixelFormat32bppBGRA, WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeCustom);
         if (FAILED(hr)) return Err(L"WIC format convert failed");
 
-        std::vector<unsigned char> bgra((size_t)iw * ih * 4);
-        hr = conv->CopyPixels(nullptr, (UINT)(iw * 4), (UINT)bgra.size(), bgra.data());
+        std::vector<unsigned char> bgra((size_t)texW * (size_t)texH * 4);
+        hr = conv->CopyPixels(nullptr, (UINT)(texW * 4), (UINT)bgra.size(), bgra.data());
         if (FAILED(hr)) return Err(L"CopyPixels BGRA failed");
 
-        pixels.resize((size_t)iw * ih);
+        pixels.resize((size_t)texW * (size_t)texH);
         for (size_t i = 0, j = 0; i < pixels.size(); ++i, j += 4)
         {
             pixels[i] = (unsigned char)((bgra[j] * 29 + bgra[j + 1] * 150 + bgra[j + 2] * 77) >> 8);
@@ -894,9 +916,18 @@ public:
         td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
 
         D3D11_SUBRESOURCE_DATA sd{ pixels.data(), (UINT)texW, 0 };
-        if (FAILED(dev->CreateTexture2D(&td, &sd, &tex)))
+        HRESULT hr = dev->CreateTexture2D(&td, &sd, &tex);
+        if (FAILED(hr))
         {
-            return Err(L"CreateTexture2D failed");
+            wchar_t message[256]{};
+            swprintf_s(
+                message,
+                L"CreateTexture2D failed (HRESULT 0x%08X, texture %d x %d, device limit %d)",
+                (unsigned int)hr,
+                texW,
+                texH,
+                MaxTextureDimension());
+            return Err(message);
         }
 
         D3D11_SHADER_RESOURCE_VIEW_DESC vd{};
@@ -960,7 +991,7 @@ public:
     bool TryPixExact(int x, int y, unsigned char& value)
     {
         if (x < 0 || y < 0 || x >= iw || y >= ih) return false;
-        if (!bmpTileReady || sampleStep <= 1)
+        if (!ShouldUseFullResolutionTiles())
         {
             value = Pix(x, y);
             return !pixels.empty();
@@ -1417,7 +1448,8 @@ public:
                 continue;
             }
             TileCacheEntry loaded;
-            if (!ReadBmpTile(key, loaded)) continue;
+            bool loadedOk = bmpTileReady ? ReadBmpTile(key, loaded) : ReadWicTile(key, loaded);
+            if (!loadedOk) continue;
             if (key.level != tileEpoch.load()) {
                 std::lock_guard<std::mutex> lock(tileCache.mtx);
                 tileCache.staleDiscardCount++;
@@ -1519,6 +1551,57 @@ public:
         return true;
     }
 
+    bool ReadWicTile(const TileKey& key, TileCacheEntry& out) {
+        if (!wicTileReady || path.empty()) return false;
+        int imageX = key.x * kTileSize;
+        int imageY = key.y * kTileSize;
+        if (imageX >= iw || imageY >= ih) return false;
+        int tw = std::min(kTileSize, iw - imageX);
+        int th = std::min(kTileSize, ih - imageY);
+
+        ComPtr<IWICImagingFactory> fac;
+        HRESULT hr = CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&fac));
+        if (FAILED(hr)) return false;
+
+        ComPtr<IWICBitmapDecoder> dec;
+        hr = fac->CreateDecoderFromFilename(path.c_str(), nullptr, GENERIC_READ, WICDecodeMetadataCacheOnDemand, &dec);
+        if (FAILED(hr)) return false;
+
+        ComPtr<IWICBitmapFrameDecode> frame;
+        hr = dec->GetFrame(0, &frame);
+        if (FAILED(hr)) return false;
+
+        WICRect rect{ imageX, imageY, tw, th };
+        ComPtr<IWICBitmapClipper> clipper;
+        hr = fac->CreateBitmapClipper(&clipper);
+        if (FAILED(hr)) return false;
+        hr = clipper->Initialize(frame.Get(), &rect);
+        if (FAILED(hr)) return false;
+
+        ComPtr<IWICFormatConverter> conv;
+        hr = fac->CreateFormatConverter(&conv);
+        if (FAILED(hr)) return false;
+        hr = conv->Initialize(clipper.Get(), GUID_WICPixelFormat32bppBGRA, WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeCustom);
+        if (FAILED(hr)) return false;
+
+        std::vector<unsigned char> bgra((size_t)tw * (size_t)th * 4);
+        hr = conv->CopyPixels(nullptr, (UINT)(tw * 4), (UINT)bgra.size(), bgra.data());
+        if (FAILED(hr)) return false;
+
+        std::vector<unsigned char> gray((size_t)tw * (size_t)th);
+        for (size_t i = 0, j = 0; i < gray.size(); ++i, j += 4) {
+            gray[i] = (unsigned char)((bgra[j] * 29 + bgra[j + 1] * 150 + bgra[j + 2] * 77) >> 8);
+        }
+
+        out.imageX = imageX;
+        out.imageY = imageY;
+        out.w = tw;
+        out.h = th;
+        out.byteCount = tw * th;
+        out.gray.swap(gray);
+        return true;
+    }
+
     bool UploadTileToGpu(TileCacheEntry& e) {
         if (e.w <= 0 || e.h <= 0 || e.gray.empty()) return false;
         D3D11_TEXTURE2D_DESC td{};
@@ -1547,7 +1630,7 @@ public:
             std::lock_guard<std::mutex> lock(tileCache.mtx);
             tileCache.uploadedLastFrame = 0;
         }
-        if (!bmpTileReady || sampleStep <= 1 || scale < fitScale * (float)kFullResolutionTileZoomThreshold) return;
+        if (!ShouldUseFullResolutionTiles()) return;
         int processed = 0;
         int perFrame = std::max(1, tileCache.maxUploadPerFrame);
         while (processed < perFrame) {
@@ -1624,7 +1707,7 @@ public:
     }
 
     void DrawVisibleTiles() {
-        if (!bmpTileReady || sampleStep <= 1) return;
+        if (!ShouldUseFullResolutionTiles()) return;
         float ix0 = std::max(0.0f, (-ox) / scale), iy0 = std::max(0.0f, (-oy) / scale);
         float ix1 = std::min((float)iw, (cw - ox) / scale), iy1 = std::min((float)ih, (ch - oy) / scale);
         int tx0 = ClampInt((int)std::floor(ix0 / kTileSize), 0, std::max(0, (iw - 1) / kTileSize));
@@ -1647,12 +1730,11 @@ public:
     }
 
     void PlanVisibleTiles(){
-        if(iw <= 0 || ih <= 0) return;
+        if(iw <= 0 || ih <= 0 || !ShouldUseFullResolutionTiles()) return;
         // Use full-resolution tile planning only after the viewer is zoomed in
         // enough that the preview texture can no longer represent the requested detail.
         // This is intentionally lightweight: it only marks visible tile IDs and queues
         // them. The next phase can attach worker IO + GPU tile texture upload here.
-        if(scale < fitScale * (float)kFullResolutionTileZoomThreshold) return;
         float ix0=std::max(0.0f,(-ox)/scale), iy0=std::max(0.0f,(-oy)/scale);
         float ix1=std::min((float)iw,(cw-ox)/scale), iy1=std::min((float)ih,(ch-oy)/scale);
         int tx0=ClampInt((int)std::floor(ix0 / kTileSize) - kPreloadTileMargin, 0, std::max(0,(iw-1)/kTileSize));
@@ -1672,7 +1754,7 @@ public:
         }
     }
     int TilePendingCount(){
-        if(!bmpTileReady || sampleStep <= 1) return 0;
+        if(!HasFullResolutionTiles() || sampleStep <= 1) return 0;
         std::lock_guard<std::mutex> lock(tileCache.mtx);
         return (int)(tileCache.pending.size() + tileCache.loadQueue.size());
     }
@@ -1681,7 +1763,7 @@ public:
         maxUploadPerFrame = tileCache.maxUploadPerFrame;
         cpuLimitMb = tileCache.cpuLimitBytes / (1024 * 1024);
         gpuLimitMb = tileCache.gpuLimitBytes / (1024 * 1024);
-        if(!bmpTileReady || sampleStep <= 1) return;
+        if(!HasFullResolutionTiles() || sampleStep <= 1) return;
         std::lock_guard<std::mutex> lock(tileCache.mtx);
         pendingWorker = (int)tileCache.loadQueue.size();
         readyUpload = (int)tileCache.pending.size();
