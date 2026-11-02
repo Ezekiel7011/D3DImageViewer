@@ -12,8 +12,34 @@
     <RootNamespace>CSharpViewer</RootNamespace>
     <Version>1.0.0</Version>
     <ApplicationIcon>..\icon.ico</ApplicationIcon>
+    <NativeViewerProject>$(MSBuildProjectDirectory)\..\NativeD3D11Viewer\NativeD3D11Viewer.vcxproj</NativeViewerProject>
+    <NativeViewerDll>$(MSBuildProjectDirectory)\bin\x64\$(Configuration)\net8.0-windows\NativeD3D11Viewer.dll</NativeViewerDll>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\AoiBatchExportApi\AoiBatchExportApi.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <!--
+      The native viewer is built by the solution (or build_publish_x64.bat) into
+      this directory. Mark it as a publish asset so Visual Studio FileSystem
+      publishing does not leave the executable without its native dependency.
+    -->
+    <None Include="$(NativeViewerDll)"
+          Link="NativeD3D11Viewer.dll"
+          CopyToPublishDirectory="PreserveNewest"
+          Visible="false" />
+  </ItemGroup>
+  <Target Name="BuildNativeViewerForVisualStudioPublish"
+          BeforeTargets="ComputeFilesToPublish"
+          Condition="'$(BuildingInsideVisualStudio)' == 'true'">
+    <MSBuild Projects="$(NativeViewerProject)"
+             Targets="Build"
+             Properties="Configuration=$(Configuration);Platform=x64" />
+  </Target>
+  <Target Name="EnsureNativeViewerIsAvailableForPublish"
+          BeforeTargets="ComputeFilesToPublish"
+          DependsOnTargets="BuildNativeViewerForVisualStudioPublish">
+    <Error Condition="!Exists('$(NativeViewerDll)')"
+           Text="NativeD3D11Viewer.dll is missing. Build the x64 solution first or publish with build_publish_x64.bat." />
+  </Target>
 </Project>
