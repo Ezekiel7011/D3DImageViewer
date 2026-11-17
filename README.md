@@ -2,6 +2,8 @@
 
 > A high-performance AOI image review, annotation, analysis, and export application built with Native C++, Direct3D 11, and .NET 8 WinForms.
 
+第三方軟體整合 DLL、Metadata Overlay、拖曳、縮放與中心線，請參閱 [DLL Viewer Integration Guide（繁體中文）](docs/DLL_Viewer_Integration_Guide_zh-TW.md)。
+
 ## Overview
 
 AOI Image Viewer is a Windows desktop application designed for Automated Optical Inspection (AOI) image review and defect inspection workflows.
