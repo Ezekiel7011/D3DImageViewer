@@ -185,9 +185,14 @@ static bool IsAoiType(int t)
     return t == NV_OVERLAY_AOI_DIE_CENTER || t == NV_OVERLAY_AOI_DIE_CORNER || t == NV_OVERLAY_AOI_DEFECT;
 }
 
-static std::string FormatDefectDimension(double micrometers, float pixels)
+static bool HasPhysicalSize(double micrometers)
 {
-    const bool hasPhysicalSize = std::isfinite(micrometers) && micrometers > 0.0;
+    return std::isfinite(micrometers) && micrometers > 0.0;
+}
+
+static std::string FormatOverlayDimension(double micrometers, float pixels)
+{
+    const bool hasPhysicalSize = HasPhysicalSize(micrometers);
     char buffer[32];
     const auto result = hasPhysicalSize
         ? std::to_chars(buffer, buffer + sizeof(buffer), micrometers, std::chars_format::general)
@@ -2087,31 +2092,32 @@ public:
                         PushLine(v, o.poly[pi*2], o.poly[pi*2+1], o.poly[pj*2], o.poly[pj*2+1], r, g, b, 1);
                     }
                     for(size_t pi=0; pi<npts; ++pi){ DrawHandleScreen(v, o.poly[pi*2], o.poly[pi*2+1]); }
-                    if(!o.name.empty()){
-                        float sx,sy;
-                        ImageToScreen(o.x1,o.y1,sx,sy);
-                        float textUnits=0;
-                        for(size_t ci=0;ci<o.name.size();++ci) textUnits += o.name[ci] > 0x7f ? 2.0f : 1.0f;
-                        float boxW=ClampFloat(textUnits*7.2f+12.0f,52.0f,420.0f), boxH=22.0f;
-                        float labelY=sy-boxH-2.0f;
-                        if(labelY<2.0f) labelY=sy+2.0f;
-                        FillRectScreen(v,sx,labelY,boxW,boxH,0.0f,0.0f,0.0f,0.88f);
-                        QueueTextWide(sx+5.0f,labelY+1.0f,boxW-10.0f,boxH-2.0f,12.0f,o.name,RGB(255,255,255));
-                    }
                 }
-            }
-            if (o.type == NV_OVERLAY_AOI_DEFECT) {
-                float sx, sy;
-                ImageToScreen(std::min(o.x1, o.x2), std::min(o.y1, o.y2), sx, sy);
-                const std::string label =
-                    "W " + FormatDefectDimension(o.widthUm, std::abs(o.x2 - o.x1)) +
-                    " H " + FormatDefectDimension(o.heightUm, std::abs(o.y2 - o.y1));
-                const float labelWidth = static_cast<float>(label.size()) * 7.2f + 12.0f;
-                FillRectScreen(v, sx, sy - 24.0f, labelWidth, 22.0f, 0, 0, 0, 0.92f);
-                QueueText(sx + 5.0f, sy - 22.0f, labelWidth - 5.0f, 22.0f, 13.0f, label, RGB(255,255,255));
             }
         } else if(o.type==NV_OVERLAY_MEASURE){ PushLine(v,o.x1,o.y1,o.x2,o.y2,r,g,b,1); }
         else { float cx=(o.x1+o.x2)*0.5f, cy=(o.y1+o.y2)*0.5f; float rx=std::max(1.0f,fabsf(o.x2-o.x1)*0.5f); float ry=std::max(1.0f,fabsf(o.y2-o.y1)*0.5f); if(o.type==NV_OVERLAY_AOI_DIE_CENTER){ cx=o.x1; cy=o.y1; float rr=std::max(6.0f/std::max(scale,0.01f), std::min(18.0f/std::max(scale,0.01f), std::max(1.0f, fabsf(o.x2-o.x1)))); const int n=48; for(int i=0;i<n;i++){ float a1=6.2831853f*i/n,a2=6.2831853f*(i+1)/n; PushLine(v,cx+cosf(a1)*rr,cy+sinf(a1)*rr,cx+cosf(a2)*rr,cy+sinf(a2)*rr,r,g,b,1); } PushLine(v,cx-rr*0.65f,cy,cx+rr*0.65f,cy,r,g,b,1); PushLine(v,cx,cy-rr*0.65f,cx,cy+rr*0.65f,r,g,b,1); } else { const int n=96; for(int i=0;i<n;i++){ float a1=6.2831853f*i/n,a2=6.2831853f*(i+1)/n; float p1x=cx+cosf(a1)*rx,p1y=cy+sinf(a1)*ry,p2x=cx+cosf(a2)*rx,p2y=cy+sinf(a2)*ry; float rp1x,rp1y,rp2x,rp2y; RotateAround(cx,cy,o.angle,p1x,p1y,rp1x,rp1y); RotateAround(cx,cy,o.angle,p2x,p2y,rp2x,rp2y); PushLine(v,rp1x,rp1y,rp2x,rp2y,r,g,b,1);} float ex,ey; RotateAround(cx,cy,o.angle,cx+rx*0.75f,cy,ex,ey); PushLine(v,cx,cy,ex,ey,r,g,b,1); } }
+        const bool isPolygon = o.type == NV_OVERLAY_DRAW_POLYGON;
+        const bool showSize = o.type == NV_OVERLAY_AOI_DEFECT ||
+            HasPhysicalSize(o.widthUm) || HasPhysicalSize(o.heightUm);
+        if (showSize || (isPolygon && !o.name.empty())) {
+            std::wstring label;
+            if (showSize) {
+                label = Widen("W " + FormatOverlayDimension(o.widthUm, std::abs(o.x2 - o.x1)) +
+                    " H " + FormatOverlayDimension(o.heightUm, std::abs(o.y2 - o.y1)));
+            }
+            if (isPolygon && !o.name.empty()) {
+                if (!label.empty()) label += L"  ";
+                label += o.name;
+            }
+            float sx, sy;
+            ImageToScreen(std::min(o.x1, o.x2), std::min(o.y1, o.y2), sx, sy);
+            float textUnits = 0;
+            for (wchar_t c : label) textUnits += c > 0x7f ? 2.0f : 1.0f;
+            const float width = ClampFloat(textUnits * 7.2f + 12.0f, 52.0f, 420.0f);
+            const float y = sy >= 26.0f ? sy - 24.0f : sy + 2.0f;
+            FillRectScreen(v, sx, y, width, 22.0f, 0, 0, 0, 0.92f);
+            QueueTextWide(sx + 5.0f, y + 1.0f, width - 10.0f, 20.0f, 12.0f, label, RGB(255,255,255));
+        }
         DrawHandles(v,o);
     }
         if(showCross&&iw>0){ float cx=iw*0.5f,cy=ih*0.5f; PushLine(v,0,cy,(float)iw,cy,0.0f,1.0f,0.1f,1); PushLine(v,cx,0,cx,(float)ih,0.0f,1.0f,0.1f,1); }
@@ -2184,7 +2190,8 @@ public:
         return bestT;
     }
 
-    int AddOverlay(int type, float x, float y, float w, float h, float angle, const wchar_t* nm)
+    int AddOverlay(int type, float x, float y, float w, float h, float angle, const wchar_t* nm,
+        double widthUm = 0.0, double heightUm = 0.0)
     {
         Overlay o{};
         o.id = nextId++;
@@ -2198,6 +2205,8 @@ public:
         o.x3 = 0;
         o.y3 = 0;
         o.angle = angle;
+        o.widthUm = widthUm;
+        o.heightUm = heightUm;
         o.name = nm ? nm : L"Object";
         overlays.push_back(o);
 
@@ -2704,6 +2713,16 @@ NV_API int __stdcall NV_AddOverlay(void* viewer, int type, float x, float y, flo
     return v->AddOverlay(type, x, y, w, h, angle, name);
 }
 
+NV_API int __stdcall NV_AddDefectOverlay(void* viewer, float x, float y, float w, float h,
+    double widthUm, double heightUm, const wchar_t* name)
+{
+    NativeViewer* v = (NativeViewer*)viewer;
+    if (!v) return 0;
+
+    std::lock_guard<std::mutex> lock(v->apiMtx);
+    return v->AddOverlay(NV_OVERLAY_AOI_DEFECT, x, y, w, h, 0.0f, name, widthUm, heightUm);
+}
+
 NV_API void __stdcall NV_SetDefectSizeUm(void* viewer, int id, double widthUm, double heightUm)
 {
     NativeViewer* v = (NativeViewer*)viewer;
@@ -2715,6 +2734,18 @@ NV_API void __stdcall NV_SetDefectSizeUm(void* viewer, int id, double widthUm, d
 
     overlay->widthUm = widthUm;
     overlay->heightUm = heightUm;
+}
+
+NV_API void __stdcall NV_SetOverlaySizeUm(void* viewer, int id, double widthUm, double heightUm)
+{
+    NativeViewer* v = (NativeViewer*)viewer;
+    if (!v) return;
+
+    std::lock_guard<std::mutex> lock(v->apiMtx);
+    if (Overlay* overlay = v->FindOverlay(id)) {
+        overlay->widthUm = widthUm;
+        overlay->heightUm = heightUm;
+    }
 }
 
 NV_API void __stdcall NV_UpdateOverlay(void* viewer, int id, float x, float y, float w, float h, float angle)

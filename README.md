@@ -199,6 +199,8 @@ The metadata panel displays information such as:
 
 ## JSON Metadata Example
 
+Use optional `WidthUm` and `HeightUm` fields on each rectangle or polygon to supply its measured size in micrometers. Its geometry still uses image pixels. These fields work with all sidecar filenames listed above. The loader detects JSON, CSV, or key-value text by content.
+
 ```json
 {
   "properties": {
@@ -215,6 +217,8 @@ The metadata panel displays information such as:
       "y": 200,
       "width": 50,
       "height": 30,
+      "WidthUm": 215.93,
+      "HeightUm": 166.1,
       "attributes": {
         "bin": "A",
         "score": "0.98"
@@ -224,6 +228,8 @@ The metadata panel displays information such as:
       "type": "polygon",
       "name": "ROI 1",
       "category": "roi",
+      "WidthUm": 320.5,
+      "HeightUm": 240.25,
       "points": [
         [100, 100],
         [200, 100],
@@ -245,6 +251,8 @@ Rect
 bbox
 ```
 
+`WidthUm` and `HeightUm` are separate from these geometry fields. In JSON, put them on the overlay object or in its `attributes` object. Each axis without a valid positive measurement uses pixels when a size label is shown.
+
 Polygon vertices can be provided through fields such as:
 
 ```text
@@ -258,16 +266,34 @@ nodes
 ## CSV Metadata Example
 
 ```csv
-type,name,category,x,y,width,height,label
-rectangle,Defect 1,defect,100,200,50,30,NG
-rectangle,Defect 2,defect,300,400,20,10,NG
+type,name,category,x,y,width,height,WidthUm,HeightUm,label
+rectangle,Defect 1,defect,100,200,50,30,215.93,166.1,NG
+rectangle,Defect 2,defect,300,400,20,10,80.25,42.5,NG
 ```
 
 Polygon coordinates can also be represented using semicolon-separated points:
 
 ```csv
-type,name,category,points
-polygon,ROI 1,roi,"100,100;200,100;180,180"
+type,name,category,points,WidthUm,HeightUm
+polygon,ROI 1,roi,"100,100;200,100;180,180",320.5,240.25
+```
+
+## TXT / AOI Key-Value Metadata Example
+
+Use `overlay.<id>.<field>` to group the fields for each shape. Plain keys such as `Result` remain image-level properties.
+
+```text
+Result=NG
+overlay.1.name=Defect 1
+overlay.1.category=defect
+overlay.1.Rect=100,200,50,30
+overlay.1.WidthUm=215.93
+overlay.1.HeightUm=166.1
+overlay.2.type=polygon
+overlay.2.name=ROI 1
+overlay.2.points=100,100;200,100;180,180
+overlay.2.WidthUm=320.5
+overlay.2.HeightUm=240.25
 ```
 
 ---
@@ -279,6 +305,8 @@ The metadata loader includes compatibility handling for existing AOI fields such
 ```text
 defectList
 Rect
+WidthUm
+HeightUm
 drawPolygon
 dieCenterX
 dieCenterY

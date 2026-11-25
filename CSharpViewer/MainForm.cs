@@ -61,7 +61,7 @@ public sealed class MainForm : Form
     private readonly List<DrawPolygonRec> _drawPolygons = new();
     private readonly HashSet<int> _metadataOverlayIds = new();
     private readonly Dictionary<int, string> _metadataObjectListNames = new();
-    private AoiRect? _diePos;
+    private (AoiRect Rect, double WidthUm, double HeightUm)? _diePos;
     private List<string> _folderImages = new();
     private int _folderImageIndex = -1;
     private long _folderListVersion;
@@ -1118,24 +1118,22 @@ public sealed class MainForm : Form
                 if (overlay.Category.Equals("die", StringComparison.OrdinalIgnoreCase) ||
                     overlay.Name.Contains("die", StringComparison.OrdinalIgnoreCase))
                 {
-                    _diePos ??= r;
+                    _diePos ??= (r, overlay.WidthUm ?? 0, overlay.HeightUm ?? 0);
                     continue;
                 }
 
                 if (overlay.Category.Equals("defect", StringComparison.OrdinalIgnoreCase) ||
                     overlay.Name.Contains("defect", StringComparison.OrdinalIgnoreCase))
                 {
-                    double wu = ParseMetaDouble(overlay.Attributes.GetValueOrDefault("WidthUm", "0"));
-                    double hu = ParseMetaDouble(overlay.Attributes.GetValueOrDefault("HeightUm", "0"));
                     string bin = overlay.Attributes.GetValueOrDefault("BinCode", overlay.Attributes.GetValueOrDefault("bin", "--"));
                     string algo = overlay.Attributes.GetValueOrDefault("AlgoIds", overlay.Attributes.GetValueOrDefault("AlgoID", "--"));
-                    _aoiDefects.Add(new AoiDefectRec(defectIndex++, r, wu, hu, bin, algo));
+                    _aoiDefects.Add(new AoiDefectRec(defectIndex++, r, overlay.WidthUm ?? 0, overlay.HeightUm ?? 0, bin, algo));
                 }
                 else
                 {
                     string name = string.IsNullOrWhiteSpace(overlay.Name) ? $"Rectangle {_genericRects.Count + 1}" : overlay.Name;
                     string category = string.IsNullOrWhiteSpace(overlay.Category) ? "metadata" : overlay.Category;
-                    _genericRects.Add(new GenericRectRec(_genericRects.Count + 1, r, name, category));
+                    _genericRects.Add(new GenericRectRec(r, name, category, overlay.WidthUm ?? 0, overlay.HeightUm ?? 0));
                 }
             }
             else if (overlay.Kind == ViewerOverlayKind.Polygon && overlay.Points.Count >= 3)
@@ -1153,7 +1151,9 @@ public sealed class MainForm : Form
                     result,
                     bin,
                     algo,
-                    overlay.Points.Select(p => new AoiPoint(p.X, p.Y)).ToList()));
+                    overlay.Points.Select(p => new AoiPoint(p.X, p.Y)).ToList(),
+                    overlay.WidthUm ?? 0,
+                    overlay.HeightUm ?? 0));
             }
             else if ((overlay.Kind is ViewerOverlayKind.Point or ViewerOverlayKind.Crosshair) && overlay.Points.Count > 0)
             {
@@ -1195,9 +1195,6 @@ public sealed class MainForm : Form
         sb.AppendLine($"{key,-11} {value}");
     }
 
-    private static double ParseMetaDouble(string text) =>
-        double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var d) ? d : 0;
-
     private void SeedAoiObjects()
     {
         if (_lastInfo.width <= 0 || _viewer == IntPtr.Zero) return;
@@ -1210,15 +1207,15 @@ public sealed class MainForm : Form
             id = NativeMethods.NV_AddOverlay(_viewer, (int)OverlayType.AoiDieCenter, cx, cy, MathF.Max(8, MathF.Min(_lastInfo.width, _lastInfo.height) * 0.015f), 0, 0, "Die Center");
             if (id > 0) _metadataOverlayIds.Add(id);
         }
-        if (_diePos is { } die && die.W > 0 && die.H > 0)
+        if (_diePos is { } position && position.Rect is var die && die.W > 0 && die.H > 0)
         {
             id = NativeMethods.NV_AddOverlay(_viewer, (int)OverlayType.AoiDieCorner, (float)die.X, (float)die.Y, (float)die.W, (float)die.H, 0, "Die Position");
-            if (id > 0) _metadataOverlayIds.Add(id);
+            RegisterMeasuredOverlay(id, position.WidthUm, position.HeightUm);
         }
         foreach (var r in _genericRects)
         {
             id = NativeMethods.NV_AddOverlay(_viewer, (int)OverlayType.Roi, (float)r.Rect.X, (float)r.Rect.Y, (float)r.Rect.W, (float)r.Rect.H, 0, $"{r.Name}  [{r.Category}]");
-            if (id > 0) _metadataOverlayIds.Add(id);
+            RegisterMeasuredOverlay(id, r.WidthUm, r.HeightUm);
         }
         foreach (var d in _aoiDefects)
         {
@@ -1227,12 +1224,10 @@ public sealed class MainForm : Form
                 _metadata.GetValueOrDefault("Result", ""),
                 d.Bin,
                 d.AlgoIds);
-            id = NativeMethods.NV_AddOverlay(_viewer, (int)OverlayType.AoiDefect, (float)d.Rect.X, (float)d.Rect.Y, (float)d.Rect.W, (float)d.Rect.H, 0, listName);
-            if (id > 0)
-            {
-                _metadataOverlayIds.Add(id);
-                NativeMethods.NV_SetDefectSizeUm(_viewer, id, d.WidthUm, d.HeightUm);
-            }
+            id = NativeMethods.NV_AddDefectOverlay(_viewer,
+                (float)d.Rect.X, (float)d.Rect.Y, (float)d.Rect.W, (float)d.Rect.H,
+                d.WidthUm, d.HeightUm, listName);
+            if (id > 0) _metadataOverlayIds.Add(id);
         }
         foreach (var poly in _drawPolygons)
         {
@@ -1245,10 +1240,18 @@ public sealed class MainForm : Form
             id = NativeMethods.NV_AddPolygonOverlay(_viewer, (int)OverlayType.DrawPolygon, xy, poly.Points.Count, poly.Name);
             if (id > 0)
             {
-                _metadataOverlayIds.Add(id);
+                RegisterMeasuredOverlay(id, poly.WidthUm, poly.HeightUm);
                 _metadataObjectListNames[id] = BuildMetadataObjectListName(poly.Name, poly.Result, poly.Bin, poly.AlgoIds);
             }
         }
+    }
+
+    private void RegisterMeasuredOverlay(int id, double widthUm, double heightUm)
+    {
+        if (id <= 0) return;
+        _metadataOverlayIds.Add(id);
+        if (widthUm > 0 || heightUm > 0)
+            NativeMethods.NV_SetOverlaySizeUm(_viewer, id, widthUm, heightUm);
     }
 
     private static string BuildMetadataObjectListName(string name, string result, string bin, string algoIds)
@@ -1616,8 +1619,8 @@ public sealed class MainForm : Form
     private readonly record struct AoiRect(double X, double Y, double W, double H);
     private readonly record struct AoiPoint(double X, double Y);
     private sealed record AoiDefectRec(int Index, AoiRect Rect, double WidthUm, double HeightUm, string Bin, string AlgoIds);
-    private sealed record GenericRectRec(int Index, AoiRect Rect, string Name, string Category);
-    private sealed record DrawPolygonRec(int Index, string Name, string Result, string Bin, string AlgoIds, List<AoiPoint> Points);
+    private sealed record GenericRectRec(AoiRect Rect, string Name, string Category, double WidthUm, double HeightUm);
+    private sealed record DrawPolygonRec(int Index, string Name, string Result, string Bin, string AlgoIds, List<AoiPoint> Points, double WidthUm, double HeightUm);
 
     #endregion
 }

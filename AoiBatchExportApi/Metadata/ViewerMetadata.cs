@@ -41,6 +41,14 @@ public sealed class ViewerOverlay
     public ViewerRect? Rect { get; set; }
     public List<ViewerPoint> Points { get; } = new();
     public Dictionary<string, string> Attributes { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    public double? WidthUm => ReadPhysicalSize("WidthUm");
+    public double? HeightUm => ReadPhysicalSize("HeightUm");
+
+    private double? ReadPhysicalSize(string key) =>
+        Attributes.TryGetValue(key, out var text) &&
+        double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var value) &&
+        double.IsFinite(value) && value > 0 ? value : null;
 }
 
 /// <summary>
@@ -150,7 +158,9 @@ public static class ViewerMetadataLoader
     {
         var first = text.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
         if (string.IsNullOrWhiteSpace(first)) return false;
-        return first.Contains(',') && Regex.IsMatch(first, "(^|,)(type|kind|x|y|width|height|points|rect|bbox)(,|$)", RegexOptions.IgnoreCase);
+        return first.Contains(',') && SplitCsvLine(first).Any(header =>
+            header.Trim().ToLowerInvariant() is "type" or "kind" or "x" or "y" or "width" or "height"
+                or "left" or "top" or "right" or "bottom" or "points" or "vertices" or "nodes" or "rect" or "bbox");
     }
 
     #endregion
@@ -294,13 +304,15 @@ public static class ViewerMetadataLoader
 
         if (TryGetProperty(root, "diePos", out var diePosEl) && TryReadRect(diePosEl, out var dieRect))
         {
-            metadata.Overlays.Add(new ViewerOverlay
+            var overlay = new ViewerOverlay
             {
                 Kind = ViewerOverlayKind.Rectangle,
                 Name = "Die Position",
                 Category = "die",
                 Rect = dieRect
-            });
+            };
+            CopyPhysicalSize(diePosEl, overlay);
+            metadata.Overlays.Add(overlay);
         }
 
         if (TryGetProperty(root, "defectList", out var defects) && defects.ValueKind == JsonValueKind.Array)
@@ -335,7 +347,7 @@ public static class ViewerMetadataLoader
             }
         }
 
-        foreach (var pts in EnumerateLegacyPolygons(root))
+        foreach (var (item, pts) in EnumerateLegacyPolygons(root))
         {
             var overlay = new ViewerOverlay
             {
@@ -344,6 +356,7 @@ public static class ViewerMetadataLoader
                 Category = "polygon"
             };
             overlay.Points.AddRange(pts);
+            CopyPhysicalSize(item, overlay);
             metadata.Overlays.Add(overlay);
         }
     }
@@ -353,7 +366,14 @@ public static class ViewerMetadataLoader
         if (TryGetProperty(root, from, out var value)) metadata.Properties[to] = ToDisplayString(value);
     }
 
-    private static IEnumerable<List<ViewerPoint>> EnumerateLegacyPolygons(JsonElement root)
+    private static void CopyPhysicalSize(JsonElement item, ViewerOverlay overlay)
+    {
+        foreach (var key in new[] { "WidthUm", "HeightUm" })
+            if (TryGetProperty(item, key, out var value))
+                overlay.Attributes[key] = ToDisplayString(value);
+    }
+
+    private static IEnumerable<(JsonElement Item, List<ViewerPoint> Points)> EnumerateLegacyPolygons(JsonElement root)
     {
         if (!TryGetProperty(root, "drawPolygon", out var arr) && !TryGetProperty(root, "drawPolygons", out arr)) yield break;
         if (arr.ValueKind != JsonValueKind.Array) yield break;
@@ -366,7 +386,7 @@ public static class ViewerMetadataLoader
             }
             var pts = new List<ViewerPoint>();
             ReadPointArray(pointsEl, pts);
-            if (pts.Count >= 3) yield return pts;
+            if (pts.Count >= 3) yield return (item, pts);
         }
     }
 
@@ -514,48 +534,43 @@ public static class ViewerMetadataLoader
                 row[headers[c]] = values[c].Trim();
             }
 
-            string type = GetRow(row, "type", GetRow(row, "kind", "rectangle")).ToLowerInvariant();
-            var overlay = new ViewerOverlay
-            {
-                Kind = type.Contains("poly") ? ViewerOverlayKind.Polygon : ViewerOverlayKind.Rectangle,
-                Name = GetRow(row, "name", GetRow(row, "label", $"CSV Object {i}")),
-                Category = GetRow(row, "category", GetRow(row, "class", ""))
-            };
-            foreach (var kv in row)
-            {
-                overlay.Attributes[kv.Key] = kv.Value;
-            }
+            AddTextOverlay(row, metadata, $"CSV Object {i}", $"CSV row {i + 1}");
+        }
+    }
 
-            if (overlay.Kind == ViewerOverlayKind.Polygon)
-            {
-                var ptsText = GetRow(row, "points", "");
-                foreach (var pair in ptsText.Split(';', StringSplitOptions.RemoveEmptyEntries))
-                {
-                    if (TryReadPointString(pair, out var pt))
-                    {
-                        overlay.Points.Add(pt);
-                    }
-                }
+    private static void AddTextOverlay(Dictionary<string, string> row, ViewerMetadata metadata,
+        string defaultName, string source)
+    {
+        string type = GetRow(row, "type", GetRow(row, "kind", "rectangle")).ToLowerInvariant();
+        var overlay = new ViewerOverlay
+        {
+            Kind = type.Contains("poly") ? ViewerOverlayKind.Polygon : ViewerOverlayKind.Rectangle,
+            Name = GetRow(row, "name", GetRow(row, "label", defaultName)),
+            Category = GetRow(row, "category", GetRow(row, "class", ""))
+        };
+        foreach (var kv in row) overlay.Attributes[kv.Key] = kv.Value;
 
-                if (overlay.Points.Count >= 3)
-                {
-                    metadata.Overlays.Add(overlay);
-                }
-                else
-                {
-                    metadata.Warnings.Add($"CSV row {i + 1}: polygon needs at least 3 points.");
-                }
-            }
-            else if (TryReadRectFromRow(row, out var rect))
+        if (overlay.Kind == ViewerOverlayKind.Polygon)
+        {
+            string points = GetRow(row, "points", GetRow(row, "vertices", GetRow(row, "nodes", "")));
+            foreach (var pair in points.Split(';', StringSplitOptions.RemoveEmptyEntries))
+                if (TryReadPointString(pair, out var point)) overlay.Points.Add(point);
+
+            if (overlay.Points.Count < 3)
             {
-                overlay.Rect = rect;
-                metadata.Overlays.Add(overlay);
-            }
-            else
-            {
-                metadata.Warnings.Add($"CSV row {i + 1}: rectangle geometry not found.");
+                metadata.Warnings.Add($"{source}: polygon needs at least 3 points.");
+                return;
             }
         }
+        else if (TryReadRectFromRow(row, out var rect))
+            overlay.Rect = rect;
+        else
+        {
+            metadata.Warnings.Add($"{source}: rectangle geometry not found.");
+            return;
+        }
+
+        metadata.Overlays.Add(overlay);
     }
 
     private static bool TryReadRectFromRow(Dictionary<string, string> row, out ViewerRect rect)
@@ -565,6 +580,12 @@ public static class ViewerMetadataLoader
             (TryParseRowDouble(row, "height", out var h) || TryParseRowDouble(row, "h", out h)))
         {
             rect = new ViewerRect(x, y, w, h);
+            return true;
+        }
+        if (TryParseRowDouble(row, "left", out var left) && TryParseRowDouble(row, "top", out var top) &&
+            TryParseRowDouble(row, "right", out var right) && TryParseRowDouble(row, "bottom", out var bottom))
+        {
+            rect = new ViewerRect(left, top, right - left, bottom - top);
             return true;
         }
         foreach (var key in new[] { "rect", "bbox" })
@@ -616,11 +637,27 @@ public static class ViewerMetadataLoader
 
     private static void ParseKeyValueText(string text, ViewerMetadata metadata)
     {
+        var overlays = new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
         foreach (var line in text.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
         {
             var m = Regex.Match(line, @"^\s*([A-Za-z0-9_ /.-]+)\s*[:=,]\s*(.+?)\s*$");
-        if (m.Success) metadata.Properties[m.Groups[1].Value.Trim()] = m.Groups[2].Value.Trim();
+            if (!m.Success) continue;
+            string key = m.Groups[1].Value.Trim();
+            string value = m.Groups[2].Value.Trim();
+            var parts = key.Split('.', 3);
+            if (parts.Length != 3 || !parts[0].Equals("overlay", StringComparison.OrdinalIgnoreCase) ||
+                parts[1].Length == 0 || parts[2].Length == 0)
+            {
+                metadata.Properties[key] = value;
+                continue;
+            }
+
+            if (!overlays.TryGetValue(parts[1], out var row))
+                overlays[parts[1]] = row = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            row[parts[2]] = value;
         }
+        foreach (var (id, row) in overlays)
+            AddTextOverlay(row, metadata, $"Overlay {id}", $"Overlay {id}");
     }
 
     #endregion

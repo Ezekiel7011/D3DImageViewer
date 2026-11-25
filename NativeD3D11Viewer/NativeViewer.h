@@ -144,7 +144,10 @@ NV_API void __stdcall NV_SetTileSettings(void* viewer, int uploadPerFrame, int c
 NV_API void __stdcall NV_SetRenderReason(void* viewer, int reason);
 NV_API int __stdcall NV_GetLastError(void* viewer, wchar_t* buffer, int capacity);
 NV_API int __stdcall NV_AddOverlay(void* viewer, int type, float x, float y, float w, float h, float angle, const wchar_t* name);
+// The rectangle uses image pixels. Physical dimensions are optional per axis (0 = unknown).
+NV_API int __stdcall NV_AddDefectOverlay(void* viewer, float x, float y, float w, float h, double widthUm, double heightUm, const wchar_t* name);
 // Positive finite values supply the on-image measurement. Other values use pixel geometry.
 NV_API void __stdcall NV_SetDefectSizeUm(void* viewer, int id, double widthUm, double heightUm);
+NV_API void __stdcall NV_SetOverlaySizeUm(void* viewer, int id, double widthUm, double heightUm);
 NV_API void __stdcall NV_UpdateOverlay(void* viewer, int id, float x, float y, float w, float h, float angle);
 NV_API int __stdcall NV_AddPolygonOverlay(void* viewer, int type, const float* xyPairs, int pointCount, const wchar_t* name);
