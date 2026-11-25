@@ -1228,7 +1228,11 @@ public sealed class MainForm : Form
                 d.Bin,
                 d.AlgoIds);
             id = NativeMethods.NV_AddOverlay(_viewer, (int)OverlayType.AoiDefect, (float)d.Rect.X, (float)d.Rect.Y, (float)d.Rect.W, (float)d.Rect.H, 0, listName);
-            if (id > 0) _metadataOverlayIds.Add(id);
+            if (id > 0)
+            {
+                _metadataOverlayIds.Add(id);
+                NativeMethods.NV_SetDefectSizeUm(_viewer, id, d.WidthUm, d.HeightUm);
+            }
         }
         foreach (var poly in _drawPolygons)
         {
@@ -1250,9 +1254,9 @@ public sealed class MainForm : Form
     private static string BuildMetadataObjectListName(string name, string result, string bin, string algoIds)
     {
         var parts = new List<string> { name };
-        if (HasMetadataDisplayValue(result)) parts.Add($"Result {result}");
-        if (HasMetadataDisplayValue(bin)) parts.Add($"Bin {bin}");
-        if (HasMetadataDisplayValue(algoIds)) parts.Add($"AlgoID {algoIds}");
+        //if (HasMetadataDisplayValue(result)) parts.Add($"Result {result}");
+        if (HasMetadataDisplayValue(bin)) parts.Add($"Bin {bin};");
+        if (HasMetadataDisplayValue(algoIds)) parts.Add($"{algoIds};");
         return string.Join("  ", parts);
     }
 

@@ -139,6 +139,7 @@ internal static class NativeMethods
     [DllImport(Dll, CallingConvention = CallingConvention.StdCall)] public static extern int NV_AnalyzeSelectedRoi(IntPtr viewer, out NVRoiStats stats, int[] histogram256, double[] projX, int projXCapacity, double[] projY, int projYCapacity);
 
     [DllImport(Dll, CallingConvention = CallingConvention.StdCall, CharSet = CharSet.Unicode)] public static extern int NV_AddOverlay(IntPtr viewer, int type, float x, float y, float w, float h, float angle, string name);
+    [DllImport(Dll, CallingConvention = CallingConvention.StdCall)] public static extern void NV_SetDefectSizeUm(IntPtr viewer, int id, double widthUm, double heightUm);
     [DllImport(Dll, CallingConvention = CallingConvention.StdCall)] public static extern void NV_UpdateOverlay(IntPtr viewer, int id, float x, float y, float w, float h, float angle);
     [DllImport(Dll, CallingConvention = CallingConvention.StdCall, CharSet = CharSet.Unicode)] public static extern int NV_AddPolygonOverlay(IntPtr viewer, int type, [In] float[] xyPairs, int pointCount, string name);
     [DllImport(Dll, CallingConvention = CallingConvention.StdCall)] public static extern int NV_GetPendingTileCount(IntPtr viewer);
